@@ -4,7 +4,7 @@ from discord.ext import commands
 import os
 import random
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,17 +25,16 @@ BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/13957
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-def generate_id():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-def get_footer():
-    unix_timestamp = int(datetime.utcnow().timestamp())
-    return f"ID: {generate_id()} | <t:{unix_timestamp}:f>"
-
 @bot.event
 async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=guild_id))
     print(f"Logged in as {bot.user}")
+
+def generate_id():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+
+def get_footer():
+    return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight", guild=discord.Object(id=guild_id))
 @app_commands.describe(
@@ -49,7 +48,7 @@ async def flight_schedule(interaction: discord.Interaction, host: str, time: str
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
-    start_time = datetime.utcnow() + timedelta(minutes=5)
+    start_time = datetime.now(timezone.utc) + timedelta(minutes=5)
     end_time = start_time + timedelta(hours=1)
 
     event = await interaction.guild.create_scheduled_event(
