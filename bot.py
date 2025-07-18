@@ -20,6 +20,7 @@ ANNOUNCE_ROLE_ID = int(os.getenv("ANNOUNCE_ROLE_ID"))
 INFRACT_ROLE_ID = int(os.getenv("INFRACT_ROLE_ID"))
 PROMOTE_ROLE_ID = int(os.getenv("PROMOTE_ROLE_ID"))
 LOG_ROLE_ID = int(os.getenv("LOG_ROLE_ID"))
+VIEW_LOGS_ROLE_ID = int(os.getenv("VIEW_LOGS_ROLE_ID"))
 
 BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png?ex=687ba6be&is=687a553e&hm=a96e719147a26743f923afbe2337735c43a22a2a657e1b0cd2e53820b75b0ad0&=&format=webp&quality=lossless&width=843&height=24"
 
@@ -169,4 +170,13 @@ async def flight_log(interaction: discord.Interaction, user: discord.Member, evi
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("Flight log submitted.", ephemeral=True)
 
-bot.run(token)
+@bot.tree.command(name="view_logs", description="View flight logs for a user", guild=discord.Object(id=guild_id))
+@app_commands.describe(
+    user="User to view flight logs for"
+)
+async def view_logs(interaction: discord.Interaction, user: discord.Member):
+    if VIEW_LOGS_ROLE_ID not in [role.id for role in interaction.user.roles]:
+        return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+
+    logs_channel = bot.get_channel(allowed_channel_id)
+    if logs_channel is None:
