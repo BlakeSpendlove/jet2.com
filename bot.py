@@ -4,8 +4,9 @@ from discord.ext import commands
 import os
 import random
 import string
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import asyncio
 
 load_dotenv()
 
@@ -14,6 +15,7 @@ intents.message_content = True
 token = os.getenv("DISCORD_TOKEN")
 guild_id = int(os.getenv("GUILD_ID"))
 allowed_channel_id = int(os.getenv("ALLOWED_CHANNEL_ID"))
+SUPPORT_FORUM_CHANNEL_ID = int(os.getenv("SUPPORT_FORUM_CHANNEL_ID"))
 
 SCHEDULE_ROLE_ID = int(os.getenv("SCHEDULE_ROLE_ID"))
 ANNOUNCE_ROLE_ID = int(os.getenv("ANNOUNCE_ROLE_ID"))
@@ -25,16 +27,17 @@ BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/13957
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-@bot.event
-async def on_ready():
-    await bot.tree.sync(guild=discord.Object(id=guild_id))
-    print(f"Logged in as {bot.user}")
-
 def generate_id():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def get_footer():
-    return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    unix_timestamp = int(datetime.utcnow().timestamp())
+    return f"ID: {generate_id()} | <t:{unix_timestamp}:f>"
+
+@bot.event
+async def on_ready():
+    await bot.tree.sync(guild=discord.Object(id=guild_id))
+    print(f"Logged in as {bot.user}")
 
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight", guild=discord.Object(id=guild_id))
 @app_commands.describe(
@@ -48,7 +51,7 @@ async def flight_schedule(interaction: discord.Interaction, host: str, time: str
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
-    start_time = datetime.now(timezone.utc) + timedelta(minutes=5)
+    start_time = datetime.utcnow() + timedelta(minutes=5)
     end_time = start_time + timedelta(hours=1)
 
     event = await interaction.guild.create_scheduled_event(
@@ -169,4 +172,11 @@ async def flight_log(interaction: discord.Interaction, user: discord.Member, evi
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("Flight log submitted.", ephemeral=True)
 
-bot.run(token)
+
+async def main():
+    bot.support_forum_id = SUPPORT_FORUM_CHANNEL_ID  # Pass forum ID to bot attribute
+    await bot.load_extension("ticket_cog")  # Load ticket cog (make sure ticket_cog.py is in same folder)
+    await bot.start(token)
+
+if __name__ == "__main__":
+    asyncio.run(main())
