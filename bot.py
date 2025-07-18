@@ -28,11 +28,23 @@ VIEWLOGS_ROLE_ID = int(os.getenv("VIEWLOGS_ROLE_ID"))
 BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png"
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 flight_logs = []
+
+# Flag to clear commands only once per run
+commands_cleared = False
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync(guild=discord.Object(id=guild_id))
+    global commands_cleared
+    if not commands_cleared:
+        print("Clearing guild commands to avoid duplicates...")
+        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
+        commands_cleared = True
+        print("Commands cleared and synced.")
+    else:
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
     print(f"Logged in as {bot.user}")
 
 def generate_id():
@@ -41,8 +53,7 @@ def generate_id():
 def get_footer():
     return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
-# --- /flight_schedule ---
-@bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight")
 @app_commands.describe(host="Host of the flight", time="Time of the flight", flight_info="Flight route", aircraft_type="Aircraft used", flight_code="Flight code")
 async def flight_schedule(interaction: discord.Interaction, host: str, time: str, flight_info: str, aircraft_type: str, flight_code: str):
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
@@ -63,8 +74,7 @@ async def flight_schedule(interaction: discord.Interaction, host: str, time: str
 
     await interaction.response.send_message(f"Flight event created for **{flight_code}**. [View Event]({event.url})")
 
-# --- /flight_announce ---
-@bot.tree.command(name="flight_announce", description="Announce a flight", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="flight_announce", description="Announce a flight")
 @app_commands.describe(time="Flight time", flight_info="Flight info", aircraft="Aircraft used", airport_link="Airport link", flight_code="Flight code", channel_id="Channel ID")
 async def flight_announce(interaction: discord.Interaction, time: str, flight_info: str, aircraft: str, airport_link: str, flight_code: str, channel_id: str):
     if ANNOUNCE_ROLE_ID not in [role.id for role in interaction.user.roles]:
@@ -86,8 +96,7 @@ async def flight_announce(interaction: discord.Interaction, time: str, flight_in
     await channel.send(embed=embed)
     await interaction.response.send_message("Flight announced.", ephemeral=True)
 
-# --- /infract ---
-@bot.tree.command(name="infract", description="Discipline a staff member", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="infract", description="Discipline a staff member")
 @app_commands.describe(user="User to discipline", reason="Reason", type="Type of action", demotion_role="Optional demotion role")
 async def infract(interaction: discord.Interaction, user: discord.Member, reason: str, type: str, demotion_role: discord.Role = None):
     if interaction.channel.id != INFRACT_CHANNEL_ID:
@@ -107,8 +116,7 @@ async def infract(interaction: discord.Interaction, user: discord.Member, reason
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("Infraction logged.", ephemeral=True)
 
-# --- /promote ---
-@bot.tree.command(name="promote", description="Promote a staff member", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="promote", description="Promote a staff member")
 @app_commands.describe(user="User to promote", promotion_to="New title", reason="Reason for promotion")
 async def promote(interaction: discord.Interaction, user: discord.Member, promotion_to: str, reason: str):
     if interaction.channel.id != PROMOTE_CHANNEL_ID:
@@ -128,8 +136,7 @@ async def promote(interaction: discord.Interaction, user: discord.Member, promot
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("Promotion logged.", ephemeral=True)
 
-# --- /flight_log ---
-@bot.tree.command(name="flight_log", description="Log a flight", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="flight_log", description="Log a flight")
 @app_commands.describe(user="Flight host", evidence="Image evidence", session_date="Date", flight_code="Flight code")
 async def flight_log(interaction: discord.Interaction, user: discord.Member, evidence: discord.Attachment, session_date: str, flight_code: str):
     if interaction.channel.id != FLIGHT_LOG_CHANNEL_ID:
@@ -159,8 +166,7 @@ async def flight_log(interaction: discord.Interaction, user: discord.Member, evi
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-# --- /view_logs ---
-@bot.tree.command(name="view_logs", description="View a user's flight logs", guild=discord.Object(id=guild_id))
+@bot.tree.command(name="view_logs", description="View a user's flight logs")
 @app_commands.describe(user="User to check")
 async def view_logs(interaction: discord.Interaction, user: discord.Member):
     if VIEWLOGS_ROLE_ID not in [role.id for role in interaction.user.roles]:
@@ -180,5 +186,13 @@ async def view_logs(interaction: discord.Interaction, user: discord.Member):
     embed.set_footer(text=get_footer())
     await interaction.response.send_message(embed=embed)
 
-# --- Run bot ---
+@bot.command()
+async def clear_commands(ctx):
+    if ctx.author.guild_permissions.administrator:
+        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
+        await ctx.send("✅ Cleared all guild-specific slash commands.")
+    else:
+        await ctx.send("❌ You don't have permission to do this.")
+
 bot.run(token)
