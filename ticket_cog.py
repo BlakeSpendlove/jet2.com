@@ -1,168 +1,163 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
-from discord.ui import View, Button
-import datetime
+from discord.ui import Button, View
+from datetime import datetime
 
 class TicketView(View):
-    def __init__(self, cog, thread, user_id):
+    def __init__(self, bot, user_id):
         super().__init__(timeout=None)
-        self.cog = cog
-        self.thread = thread
+        self.bot = bot
         self.user_id = user_id
-        self.claimed_by = None
 
-        self.claim_button = Button(label="Claim Ticket", style=discord.ButtonStyle.primary)
-        self.claim_button.callback = self.claim_callback
-        self.add_item(self.claim_button)
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.green)
+    async def claim(self, interaction: discord.Interaction, button: Button):
+        # Assign the user who clicked as the ticket manager
+        # You can add role checks here if needed
+        await interaction.response.send_message(f"Ticket claimed by {interaction.user.mention}.", ephemeral=True)
+        # Save the claimer ID on the view to use in close
+        self.claimer_id = interaction.user.id
 
-    async def claim_callback(self, interaction: discord.Interaction):
-        if self.claimed_by is not None:
-            await interaction.response.send_message(f"Ticket already claimed by <@{self.claimed_by}>.", ephemeral=True)
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.red)
+    async def close(self, interaction: discord.Interaction, button: Button):
+        # Only allow the claimer or a manager to close
+        if hasattr(self, "claimer_id") and interaction.user.id != self.claimer_id:
+            await interaction.response.send_message("Only the ticket claimer can close this ticket.", ephemeral=True)
             return
-        self.claimed_by = interaction.user.id
-        self.claim_button.disabled = True
-        await interaction.response.edit_message(view=self)
-        await self.thread.send(f"Ticket claimed by {interaction.user.mention}")
-        # Save claim info in the cog's mapping
-        self.cog.claimed_tickets[self.thread.id] = self.claimed_by
+
+        channel = interaction.channel
+        # Find the user who opened the ticket based on channel topic or name
+        user = self.bot.get_user(self.user_id)
+        if user:
+            embed = discord.Embed(
+                title="Ticket Closed",
+                description=f"Your ticket was closed by {interaction.user} at {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                color=discord.Color.red()
+            )
+            try:
+                await user.send(embed=embed)
+            except Exception:
+                pass
+
+        await channel.delete()
 
 class TicketCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.support_forum_id = getattr(bot, "SUPPORT_FORUM_ID", None)
-        self.user_to_thread = {}  # user_id -> thread object
-        self.thread_to_user = {}  # thread_id -> user_id
-        self.claimed_tickets = {}  # thread_id -> staff user id
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print(f"TicketCog loaded. Support forum ID: {self.support_forum_id}")
+        self.ticket_map = {}  # Map user_id to channel_id
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Ignore bot messages, except for forum staff responses below
+        # Ignore messages sent by bots
         if message.author.bot:
             return
 
-        # 1) Handle DMs from users to create or send in tickets
+        # DM from user opens or sends in ticket
         if isinstance(message.channel, discord.DMChannel):
-            user = message.author
-            # Check if user already has a ticket thread open
-            thread = self.user_to_thread.get(user.id)
-            forum = self.bot.get_channel(self.support_forum_id)
-            if thread is None:
-                # Create new ticket thread in forum
-                thread = await forum.create_thread(
-                    name=f"ticket-{user.name}-{user.discriminator}",
-                    type=discord.ChannelType.public_thread,
-                    auto_archive_duration=1440,
-                    reason=f"Support ticket opened by {user}"
-                )
-                # Store mappings
-                self.user_to_thread[user.id] = thread
-                self.thread_to_user[thread.id] = user.id
+            user_id = message.author.id
+            # Check if user already has a ticket channel open
+            channel_id = self.ticket_map.get(user_id)
 
-                # Send initial message with claim button
-                view = TicketView(self, thread, user.id)
-                embed = discord.Embed(title="New Support Ticket",
-                                      description=f"Ticket opened by {user.mention} (ID: {user.id})",
-                                      color=discord.Color.blue())
-                embed.add_field(name="Instructions",
-                                value="Support staff can claim this ticket by pressing the **Claim Ticket** button below.")
+            # Get the forum channel to create threads in
+            forum_channel = self.bot.get_channel(self.bot.SUPPORT_FORUM_ID)
+            if not forum_channel:
+                print("Support forum channel not found")
+                return
+
+            # If no ticket exists, create thread
+            if channel_id is None:
+                thread = await forum_channel.create_thread(
+                    name=f"Ticket from {message.author.name}",
+                    type=discord.ChannelType.public_thread,
+                    reason="New support ticket"
+                )
+                self.ticket_map[user_id] = thread.id
+
+                # Send initial message embed + buttons
+                embed = discord.Embed(
+                    title="New Ticket",
+                    description=f"Ticket opened by {message.author.mention}\n\nMessage:\n{message.content}",
+                    color=discord.Color.blue()
+                )
+                view = TicketView(self.bot, user_id)
                 await thread.send(embed=embed, view=view)
 
-                # DM user confirmation
-                confirm_embed = discord.Embed(
-                    title="Ticket Opened",
-                    description="Thank you for contacting support! Your ticket has been opened. You will receive updates here within 24 hours.",
-                    color=discord.Color.green(),
-                    timestamp=datetime.datetime.utcnow()
-                )
-                await user.send(embed=confirm_embed)
-
+                # Notify user their ticket was created
+                await message.channel.send("Thank you! Your ticket has been opened. You will receive an update within 24 hours.")
             else:
-                # Existing thread - send user message into thread
-                # Relay plain message text + attachments
-                content = message.content or ""
-                files = [await f.to_file() for f in message.attachments] if message.attachments else []
-                await thread.send(f"**User:** {content}", files=files)
+                # Send the message to the existing ticket thread
+                thread = self.bot.get_channel(channel_id)
+                if thread:
+                    await thread.send(f"**{message.author.name}**: {message.content}")
+                else:
+                    # thread deleted or missing, remove mapping
+                    self.ticket_map.pop(user_id)
+                    await message.channel.send("There was an error finding your ticket. Please try again.")
 
-            return
-
-        # 2) Handle staff messages inside forum threads, relay to user as embed
-        if message.guild and message.channel.id in self.thread_to_user:
-            thread = message.channel
-            user_id = self.thread_to_user[thread.id]
-            user = self.bot.get_user(user_id)
-            if user is None:
-                # User not found? Remove mappings
-                del self.thread_to_user[thread.id]
-                for k, v in list(self.user_to_thread.items()):
-                    if v.id == thread.id:
-                        del self.user_to_thread[k]
+        # Message sent in a forum thread by a support member (manager replies)
+        elif message.channel.type == discord.ChannelType.public_thread:
+            # Check if this thread is one of our tickets
+            if message.channel.id in self.ticket_map.values():
+                # Find which user this ticket belongs to
+                user_id = None
+                for uid, tid in self.ticket_map.items():
+                    if tid == message.channel.id:
+                        user_id = uid
                         break
-                return
+                if user_id is None:
+                    return
 
-            # Don't relay user messages from user themselves (only staff)
-            if message.author.id == user_id:
-                return
+                user = self.bot.get_user(user_id)
+                if user is None:
+                    return
 
-            # Create embed for staff reply
-            embed = discord.Embed(description=message.content, color=discord.Color.blue(), timestamp=datetime.datetime.utcnow())
-            embed.set_author(name=str(message.author), icon_url=message.author.display_avatar.url)
-            if message.attachments:
-                embed.set_image(url=message.attachments[0].url)
-            try:
-                await user.send(embed=embed)
-            except discord.Forbidden:
-                # Can't DM user - maybe blocked bot
-                await thread.send(f"⚠️ Cannot DM {user.mention}.")
+                # Avoid infinite loops by ignoring bot messages
+                if message.author.bot:
+                    return
+
+                # Send the support staff message to the user as an embed DM
+                embed = discord.Embed(
+                    title=f"Support Reply from {message.author}",
+                    description=message.content,
+                    color=discord.Color.green(),
+                    timestamp=message.created_at
+                )
+                try:
+                    await user.send(embed=embed)
+                except Exception:
+                    pass
+
+    @commands.command(name="ticket_close")
+    async def ticket_close(self, ctx):
+        # Only works in a ticket thread
+        if ctx.channel.id not in self.ticket_map.values():
+            await ctx.send("This command can only be used inside a ticket thread.")
             return
 
-    @app_commands.command(name="ticket_close", description="Close the ticket you're managing")
-    async def ticket_close(self, interaction: discord.Interaction):
-        channel = interaction.channel
-        if not channel or channel.id not in self.thread_to_user:
-            await interaction.response.send_message("This command can only be used inside a ticket thread.", ephemeral=True)
+        # Find user who opened ticket
+        user_id = None
+        for uid, tid in self.ticket_map.items():
+            if tid == ctx.channel.id:
+                user_id = uid
+                break
+
+        if user_id is None:
+            await ctx.send("User for this ticket not found.")
             return
 
-        # Only the staff who claimed it can close or admins (you can expand this check)
-        claimed_by = self.claimed_tickets.get(channel.id)
-        if claimed_by is None or (claimed_by != interaction.user.id and not interaction.user.guild_permissions.manage_threads):
-            await interaction.response.send_message("Only the staff member who claimed this ticket or moderators can close it.", ephemeral=True)
-            return
-
-        user_id = self.thread_to_user[channel.id]
         user = self.bot.get_user(user_id)
-        closer_name = str(interaction.user)
-
-        # Delete thread
-        await interaction.response.send_message("Closing ticket and notifying user...")
-        await channel.delete()
-
-        # Clean mappings
-        del self.thread_to_user[channel.id]
-        if user_id in self.user_to_thread:
-            del self.user_to_thread[user_id]
-        if channel.id in self.claimed_tickets:
-            del self.claimed_tickets[channel.id]
-
-        # DM user
         if user:
-            embed = discord.Embed(title="Ticket Closed",
-                                  description=f"Your support ticket was closed by **{closer_name}** at {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}.",
-                                  color=discord.Color.red(),
-                                  timestamp=datetime.datetime.utcnow())
+            embed = discord.Embed(
+                title="Ticket Closed",
+                description=f"Your ticket was closed by {ctx.author} at {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                color=discord.Color.red()
+            )
             try:
                 await user.send(embed=embed)
-            except discord.Forbidden:
-                # User has DMs disabled
+            except Exception:
                 pass
 
-    @ticket_close.error
-    async def ticket_close_error(self, interaction: discord.Interaction, error):
-        await interaction.response.send_message(f"Error closing ticket: {error}", ephemeral=True)
+        await ctx.channel.delete()
+        self.ticket_map.pop(user_id, None)
 
 async def setup(bot):
     await bot.add_cog(TicketCog(bot))
