@@ -1,65 +1,94 @@
+import os
 import discord
 from discord.ext import commands
-from discord import app_commands
+from discord.ui import Button, View
+from dotenv import load_dotenv
+import datetime
+import uuid
 
-class TicketCog(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-        self.support_forum_id = int(bot.support_forum_id)  # We'll set this from main bot
+load_dotenv()
 
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print("TicketCog loaded")
+TOKEN = os.getenv("DISCORD_TOKEN")
+SUPPORT_FORUM_ID = int(os.getenv("SUPPORT_FORUM_ID"))
+GUILD_ID = int(os.getenv("GUILD_ID"))
+ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID"))  # For Jet2 logs etc.
 
-    @commands.Cog.listener()
-    async def on_message(self, message):
-        # Only respond to DMs, ignore bot messages
-        if message.guild is None and not message.author.bot:
-            # Create ticket in the forum
-            forum = self.bot.get_channel(self.support_forum_id)
-            if forum is None:
-                print("Support forum channel not found.")
-                return
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="/", intents=intents)
 
-            # Create a new thread (forum post)
-            thread = await forum.create_thread(
-                name=f"Support Ticket - {message.author.display_name}",
-                content=f"New support ticket from {message.author.mention}\n\n**Message:** {message.content}"
-            )
+open_tickets = {}
 
-            # Ping @everyone who can see the forum (forum handles permissions)
-            await thread.send("@everyone")
+class TicketView(View):
+    def __init__(self, author_id):
+        super().__init__(timeout=None)
+        self.author_id = author_id
 
-            # Confirm to user
-            await message.channel.send(f"Hi {message.author.name}, your support ticket has been created: {thread.jump_url}")
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.primary, custom_id="claim_button")
+    async def claim(self, interaction: discord.Interaction, button: Button):
+        if not interaction.channel:
+            return
+        await interaction.response.send_message(f"{interaction.user.mention} has claimed this ticket!", ephemeral=False)
 
-    @app_commands.command(name="claim", description="Claim a support ticket")
-    @app_commands.guilds()  # optionally specify your guild(s)
-    async def claim(self, interaction: discord.Interaction):
-        # This command must be used inside a forum thread (ticket)
-        if not isinstance(interaction.channel, discord.Thread):
-            await interaction.response.send_message("You can only claim a ticket inside the ticket thread.", ephemeral=True)
+    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_button")
+    async def close(self, interaction: discord.Interaction, button: Button):
+        if not interaction.channel:
+            return
+        await interaction.response.send_message("This ticket has been closed.")
+        await interaction.channel.delete()
+
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user.name}")
+    bot.add_view(TicketView(author_id=0))  # persistent view registration
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    if isinstance(message.channel, discord.DMChannel):
+        guild = bot.get_guild(GUILD_ID)
+        if not guild:
+            print("Guild not found")
             return
 
-        thread = interaction.channel
-
-        # Check if already claimed
-        if thread.owner_id == interaction.user.id:
-            await interaction.response.send_message("You have already claimed this ticket.", ephemeral=True)
+        support_forum = guild.get_channel(SUPPORT_FORUM_ID)
+        if not support_forum or not isinstance(support_forum, discord.ForumChannel):
+            print("Support forum not found or not a forum")
             return
 
-        # Claim the ticket by setting the owner to this user
-        await thread.edit(owner=interaction.user)
+        # Check if user already has an open ticket
+        if message.author.id in open_tickets:
+            thread = open_tickets[message.author.id]
+            await thread.send(f"**{message.author.name}:** {message.content}")
+            await message.channel.send("Your message has been forwarded to the support team.")
+            return
 
-        # Send confirmation message inside the ticket thread
-        await thread.send(f"Ticket claimed by {interaction.user.mention}")
+        # Create a new thread in the forum
+        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        thread_title = f"Ticket from {message.author.name}"
+        thread = await support_forum.create_thread(
+            name=thread_title,
+            content=f"**User:** {message.author.mention} ({message.author.id})\n**Issue:** {message.content}\n\nOpened at <t:{int(datetime.datetime.now().timestamp())}:f>",
+        )
 
-        # Respond to interaction
-        await interaction.response.send_message(f"You have claimed this ticket.", ephemeral=True)
+        open_tickets[message.author.id] = thread
 
+        view = TicketView(author_id=message.author.id)
+        await thread.send(f"Support team, a new ticket has been opened.", view=view)
 
-async def setup(bot):
-    # Pass the forum channel ID as a bot attribute (optional)
-    bot.support_forum_id = bot.support_forum_id  # this will be set in main bot
+        await message.channel.send(
+            "✅ Your support request has been received. A staff member will respond within 24 hours."
+        )
+    else:
+        await bot.process_commands(message)
 
-    await bot.add_cog(TicketCog(bot))
+# Example placeholder command from the Jet2 system
+@bot.command()
+async def flight_log(ctx):
+    if ctx.channel.id != ALLOWED_CHANNEL_ID:
+        await ctx.send("You can't use this command here.")
+        return
+    await ctx.send("Flight log submitted. ✅")
+
+bot.run(TOKEN)
