@@ -1,29 +1,56 @@
 import discord
 from discord.ext import commands
-from discord import ui
-import os
-import random
-import string
+from discord import app_commands
+from discord.ui import View, Button
+import datetime
+import asyncio
 
-GUILD_ID = int(os.getenv("GUILD_ID"))
-SUPPORT_FORUM_ID = int(os.getenv("SUPPORT_FORUM_ID"))
+TICKET_LOG = {}  # Maps user_id to forum thread
 
-# Helper to generate ticket IDs
-def generate_ticket_id():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-
-class TicketView(ui.View):
-    def __init__(self, author_id):
+class TicketView(View):
+    def __init__(self, user_id):
         super().__init__(timeout=None)
-        self.author_id = author_id
+        self.user_id = user_id
 
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim_button")
-    async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message(f"<@{interaction.user.id}> has claimed this ticket.", ephemeral=False)
+        self.claimed_by = None
 
-    @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_button")
-    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.channel.delete()
+        self.add_item(ClaimButton(self))
+        self.add_item(CloseButton(self))
+
+class ClaimButton(Button):
+    def __init__(self, parent_view):
+        super().__init__(label="Claim", style=discord.ButtonStyle.primary)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.parent_view.claimed_by:
+            await interaction.response.send_message(f"Ticket already claimed by <@{self.parent_view.claimed_by}>.", ephemeral=True)
+        else:
+            self.parent_view.claimed_by = interaction.user.id
+            await interaction.response.send_message(f"You have claimed this ticket.", ephemeral=True)
+            await interaction.message.channel.send(f"<@{interaction.user.id}> has claimed this ticket.")
+
+class CloseButton(Button):
+    def __init__(self, parent_view):
+        super().__init__(label="Close Ticket", style=discord.ButtonStyle.danger)
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = self.parent_view.user_id
+        user = await interaction.client.fetch_user(user_id)
+
+        embed = discord.Embed(title="Ticket Closed",
+                              description=f"Your ticket has been closed by **{interaction.user.name}**.",
+                              color=discord.Color.red())
+        embed.set_footer(text=f"Closed at {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+
+        try:
+            await user.send(embed=embed)
+        except:
+            pass
+
+        if interaction.channel:
+            await interaction.channel.delete()
 
 class TicketCog(commands.Cog):
     def __init__(self, bot):
@@ -31,33 +58,55 @@ class TicketCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if not isinstance(message.channel, discord.DMChannel):
+        if message.author.bot:
             return
 
-        if message.author == self.bot.user:
-            return
+        if isinstance(message.channel, discord.DMChannel):
+            if message.author.id in TICKET_LOG:
+                thread = TICKET_LOG[message.author.id]
+                await thread.send(f"**{message.author}**: {message.content}")
+            else:
+                guild = discord.utils.get(self.bot.guilds)
+                support_forum = guild.get_channel(int(self.bot.SUPPORT_FORUM_ID))
 
-        guild = self.bot.get_guild(GUILD_ID)
-        forum = guild.get_channel(SUPPORT_FORUM_ID)
+                thread = await support_forum.create_thread(
+                    name=f"Ticket from {message.author.name}",
+                    content=f"**User:** {message.author.mention}\n**Message:** {message.content}"
+                )
 
-        if not forum:
-            await message.channel.send("⚠️ Support forum not found. Please try again later.")
-            return
+                TICKET_LOG[message.author.id] = thread
 
-        ticket_id = generate_ticket_id()
+                await thread.send(f"New ticket opened by {message.author.mention}.",
+                                  view=TicketView(message.author.id))
 
-        # Create forum post
-        thread = await forum.create_thread(
-            name=f"Ticket from {message.author.name} [{ticket_id}]",
-            content=f"**User:** {message.author.mention}\n**Message:** {message.content}",
-            reason="New support ticket",
-        )
+                try:
+                    await message.author.send(
+                        "Thank you for your message. A support ticket has been opened. Our team will respond within 24 hours."
+                    )
+                except:
+                    pass
 
-        await thread.send(f"<@everyone> New ticket from {message.author.mention}!", view=TicketView(message.author.id))
+        elif message.channel.id in [t.id for t in TICKET_LOG.values()]:
+            for user_id, thread in TICKET_LOG.items():
+                if thread.id == message.channel.id:
+                    user = await self.bot.fetch_user(user_id)
+                    embed = discord.Embed(title=f"Message from Support",
+                                          description=message.content,
+                                          color=discord.Color.blue())
+                    embed.set_footer(text=f"By {message.author} | {datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                    try:
+                        await user.send(embed=embed)
+                    except:
+                        pass
 
-        await message.channel.send(
-            f"🎫 Your support request has been received!\nSomeone will respond within **24 hours**.\n**Ticket ID:** `{ticket_id}`."
-        )
+    @app_commands.command(name="ticket_close", description="Close the current ticket.")
+    async def ticket_close(self, interaction: discord.Interaction):
+        for user_id, thread in TICKET_LOG.items():
+            if thread.id == interaction.channel.id:
+                del TICKET_LOG[user_id]
+                await interaction.channel.delete()
+                return
+        await interaction.response.send_message("This channel is not a registered ticket.", ephemeral=True)
 
-def setup(bot):
-    bot.add_cog(TicketCog(bot))
+async def setup(bot):
+    await bot.add_cog(TicketCog(bot))
