@@ -13,7 +13,11 @@ intents = discord.Intents.default()
 intents.message_content = True
 token = os.getenv("DISCORD_TOKEN")
 guild_id = int(os.getenv("GUILD_ID"))
-allowed_channel_id = int(os.getenv("ALLOWED_CHANNEL_ID"))
+
+# New individual allowed channels for specific commands
+INFRACT_CHANNEL_ID = int(os.getenv("INFRACT_CHANNEL_ID"))
+PROMOTE_CHANNEL_ID = int(os.getenv("PROMOTE_CHANNEL_ID"))
+FLIGHT_LOG_CHANNEL_ID = int(os.getenv("FLIGHT_LOG_CHANNEL_ID"))
 
 SCHEDULE_ROLE_ID = int(os.getenv("SCHEDULE_ROLE_ID"))
 ANNOUNCE_ROLE_ID = int(os.getenv("ANNOUNCE_ROLE_ID"))
@@ -100,8 +104,8 @@ async def flight_announce(interaction: discord.Interaction, time: str, flight_in
     demotion_role="(Optional) Role if demotion"
 )
 async def infract(interaction: discord.Interaction, user: discord.Member, reason: str, type: str, demotion_role: discord.Role = None):
-    if interaction.channel.id != allowed_channel_id:
-        return await interaction.response.send_message("This command can only be used in the designated channel.", ephemeral=True)
+    if interaction.channel.id != INFRACT_CHANNEL_ID:
+        return await interaction.response.send_message("This command can only be used in the designated infractions channel.", ephemeral=True)
     if INFRACT_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
@@ -124,8 +128,8 @@ async def infract(interaction: discord.Interaction, user: discord.Member, reason
     reason="Reason for promotion"
 )
 async def promote(interaction: discord.Interaction, user: discord.Member, promotion_to: str, reason: str):
-    if interaction.channel.id != allowed_channel_id:
-        return await interaction.response.send_message("This command can only be used in the designated channel.", ephemeral=True)
+    if interaction.channel.id != PROMOTE_CHANNEL_ID:
+        return await interaction.response.send_message("This command can only be used in the designated promotions channel.", ephemeral=True)
     if PROMOTE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
@@ -149,8 +153,8 @@ async def promote(interaction: discord.Interaction, user: discord.Member, promot
     flight_code="Flight code"
 )
 async def flight_log(interaction: discord.Interaction, user: discord.Member, evidence: discord.Attachment, session_date: str, flight_code: str):
-    if interaction.channel.id != allowed_channel_id:
-        return await interaction.response.send_message("This command can only be used in the designated channel.", ephemeral=True)
+    if interaction.channel.id != FLIGHT_LOG_CHANNEL_ID:
+        return await interaction.response.send_message("This command can only be used in the designated flight logs channel.", ephemeral=True)
     if LOG_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
