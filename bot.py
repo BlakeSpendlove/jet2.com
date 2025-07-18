@@ -5,6 +5,7 @@ import os
 import random
 import string
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 load_dotenv()
 
@@ -20,7 +21,7 @@ LOG_ROLE_ID = int(os.getenv("LOG_ROLE_ID"))
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png?ex=687ba6be&is=687a553e&hm=a96e719147a26743f923afbe2337735c43a22a2a657e1b0cd2e53820b75b0ad0&=&format=webp&quality=lossless&width=843&height=24"
+BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png"
 SCHEDULE_BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395766076490387597/jet2-and-jet2holidays-logos-1.png"
 
 def random_id():
@@ -31,30 +32,39 @@ async def on_ready():
     await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
     print(f"Logged in as {bot.user}!")
 
-# /flight_schedule
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     host="Host of the flight",
-    time="Time of the flight",
-    aircraft="Aircraft used",
-    info_code="Flight info - code format (e.g. Bournemouth -> Punta Cana - LS8800)"
+    time="Time of the flight (e.g. 18:00 GMT)",
+    aircraft="Aircraft used (e.g. B737-800)",
+    info_code="Flight info - code (e.g. Bournemouth -> Punta Cana - LS8800)"
 )
 async def flight_schedule(interaction: discord.Interaction, host: str, time: str, aircraft: str, info_code: str):
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
-    
-    info, code = info_code.rsplit(" - ", 1)
-    await interaction.guild.create_scheduled_event(
+
+    try:
+        info, code = info_code.rsplit(" - ", 1)
+    except ValueError:
+        return await interaction.response.send_message("Format error. Use: {flight-info} - {flight-code}", ephemeral=True)
+
+    start_time = datetime.now(timezone.utc) + timedelta(minutes=5)
+    end_time = start_time + timedelta(hours=1)
+
+    event = await interaction.guild.create_scheduled_event(
         name=f"Jet2 Flight - {code}",
-        description=f"Host: {host}\nAircraft: {aircraft}\nFlight Schedule: {info}\nFlight Code: {code}",
-        start_time=discord.utils.utcnow(),
-        end_time=discord.utils.utcnow(),
-        location="Jet2 Check-in Area"
+        description=f"**Host:** {host}\n**Aircraft:** {aircraft}\n**Flight Schedule:** {info}\n**Flight Code:** {code}",
+        start_time=start_time,
+        end_time=end_time,
+        entity_type=discord.EntityType.external,
+        location="Jet2 Airport",
+        privacy_level=discord.PrivacyLevel.guild_only
     )
 
-    await interaction.response.send_message(f"Flight scheduled for {code}.", ephemeral=True)
+    await interaction.response.send_message(
+        f"Flight event created for **{code}**. [View Event]({event.url})", ephemeral=False
+    )
 
-# /flight_announce
 @bot.tree.command(name="flight_announce", description="Announce a Jet2 flight", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(
     time="Time of the flight",
@@ -76,11 +86,10 @@ async def flight_announce(interaction: discord.Interaction, time: str, info: str
     )
     embed.set_image(url=BANNER_URL)
     embed.set_footer(text=f"ID: {random_id()}")
-    
+
     await channel.send(content="@everyone", embed=embed)
     await interaction.response.send_message("Flight announced.", ephemeral=True)
 
-# /infract
 @bot.tree.command(name="infract", description="Discipline a staff member", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(user="User to infract", reason="Reason", type="Type of action", role="Demotion role (optional)")
 async def infract(interaction: discord.Interaction, user: discord.Member, reason: str, type: str, role: str = None):
@@ -98,7 +107,6 @@ async def infract(interaction: discord.Interaction, user: discord.Member, reason
     await interaction.channel.send(content=f"{user.mention}", embed=embed)
     await interaction.response.send_message("Infraction sent.", ephemeral=True)
 
-# /promote
 @bot.tree.command(name="promote", description="Promote a staff member", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(user="User to promote", promotion_to="New rank", reason="Reason")
 async def promote(interaction: discord.Interaction, user: discord.Member, promotion_to: str, reason: str):
@@ -116,7 +124,6 @@ async def promote(interaction: discord.Interaction, user: discord.Member, promot
     await interaction.channel.send(content=f"{user.mention}", embed=embed)
     await interaction.response.send_message("Promotion sent.", ephemeral=True)
 
-# /flight_log
 @bot.tree.command(name="flight_log", description="Log a flight", guild=discord.Object(id=GUILD_ID))
 @app_commands.describe(user="Who hosted the session", evidence="Upload image", session_date="Date of the session")
 async def flight_log(interaction: discord.Interaction, user: discord.Member, evidence: discord.Attachment, session_date: str):
@@ -137,4 +144,3 @@ async def flight_log(interaction: discord.Interaction, user: discord.Member, evi
     await interaction.response.send_message("Flight logged.", ephemeral=True)
 
 bot.run(TOKEN)
-
