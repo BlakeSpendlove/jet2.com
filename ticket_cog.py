@@ -1,94 +1,63 @@
-import os
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
-from dotenv import load_dotenv
-import datetime
-import uuid
+from discord import ui
+import os
+import random
+import string
 
-load_dotenv()
-
-TOKEN = os.getenv("DISCORD_TOKEN")
-SUPPORT_FORUM_ID = int(os.getenv("SUPPORT_FORUM_ID"))
 GUILD_ID = int(os.getenv("GUILD_ID"))
-ALLOWED_CHANNEL_ID = int(os.getenv("ALLOWED_CHANNEL_ID"))  # For Jet2 logs etc.
+SUPPORT_FORUM_ID = int(os.getenv("SUPPORT_FORUM_ID"))
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="/", intents=intents)
+# Helper to generate ticket IDs
+def generate_ticket_id():
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
-open_tickets = {}
-
-class TicketView(View):
+class TicketView(ui.View):
     def __init__(self, author_id):
         super().__init__(timeout=None)
         self.author_id = author_id
 
-    @discord.ui.button(label="Claim", style=discord.ButtonStyle.primary, custom_id="claim_button")
-    async def claim(self, interaction: discord.Interaction, button: Button):
-        if not interaction.channel:
-            return
-        await interaction.response.send_message(f"{interaction.user.mention} has claimed this ticket!", ephemeral=False)
+    @discord.ui.button(label="Claim", style=discord.ButtonStyle.success, custom_id="claim_button")
+    async def claim_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message(f"<@{interaction.user.id}> has claimed this ticket.", ephemeral=False)
 
     @discord.ui.button(label="Close Ticket", style=discord.ButtonStyle.danger, custom_id="close_button")
-    async def close(self, interaction: discord.Interaction, button: Button):
-        if not interaction.channel:
-            return
-        await interaction.response.send_message("This ticket has been closed.")
+    async def close_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.channel.delete()
 
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user.name}")
-    bot.add_view(TicketView(author_id=0))  # persistent view registration
+class TicketCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
 
-@bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
-
-    if isinstance(message.channel, discord.DMChannel):
-        guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            print("Guild not found")
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if not isinstance(message.channel, discord.DMChannel):
             return
 
-        support_forum = guild.get_channel(SUPPORT_FORUM_ID)
-        if not support_forum or not isinstance(support_forum, discord.ForumChannel):
-            print("Support forum not found or not a forum")
+        if message.author == self.bot.user:
             return
 
-        # Check if user already has an open ticket
-        if message.author.id in open_tickets:
-            thread = open_tickets[message.author.id]
-            await thread.send(f"**{message.author.name}:** {message.content}")
-            await message.channel.send("Your message has been forwarded to the support team.")
+        guild = self.bot.get_guild(GUILD_ID)
+        forum = guild.get_channel(SUPPORT_FORUM_ID)
+
+        if not forum:
+            await message.channel.send("⚠️ Support forum not found. Please try again later.")
             return
 
-        # Create a new thread in the forum
-        timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-        thread_title = f"Ticket from {message.author.name}"
-        thread = await support_forum.create_thread(
-            name=thread_title,
-            content=f"**User:** {message.author.mention} ({message.author.id})\n**Issue:** {message.content}\n\nOpened at <t:{int(datetime.datetime.now().timestamp())}:f>",
+        ticket_id = generate_ticket_id()
+
+        # Create forum post
+        thread = await forum.create_thread(
+            name=f"Ticket from {message.author.name} [{ticket_id}]",
+            content=f"**User:** {message.author.mention}\n**Message:** {message.content}",
+            reason="New support ticket",
         )
 
-        open_tickets[message.author.id] = thread
-
-        view = TicketView(author_id=message.author.id)
-        await thread.send(f"Support team, a new ticket has been opened.", view=view)
+        await thread.send(f"<@everyone> New ticket from {message.author.mention}!", view=TicketView(message.author.id))
 
         await message.channel.send(
-            "✅ Your support request has been received. A staff member will respond within 24 hours."
+            f"🎫 Your support request has been received!\nSomeone will respond within **24 hours**.\n**Ticket ID:** `{ticket_id}`."
         )
-    else:
-        await bot.process_commands(message)
 
-# Example placeholder command from the Jet2 system
-@bot.command()
-async def flight_log(ctx):
-    if ctx.channel.id != ALLOWED_CHANNEL_ID:
-        await ctx.send("You can't use this command here.")
-        return
-    await ctx.send("Flight log submitted. ✅")
-
-bot.run(TOKEN)
+def setup(bot):
+    bot.add_cog(TicketCog(bot))
