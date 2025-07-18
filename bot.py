@@ -170,12 +170,40 @@ async def flight_log(interaction: discord.Interaction, user: discord.Member, evi
     await interaction.channel.send(embed=embed)
     await interaction.response.send_message("Flight log submitted.", ephemeral=True)
 
-@bot.tree.command(name="view_logs", description="View flight logs for a user", guild=discord.Object(id=guild_id))
+# NEW: /view_logs command to display flight logs of a user
+@bot.tree.command(name="view_logs", description="View all flight logs for a user", guild=discord.Object(id=guild_id))
 @app_commands.describe(
-    user="User to view flight logs for"
+    user="User to view logs for"
 )
 async def view_logs(interaction: discord.Interaction, user: discord.Member):
     if VIEW_LOGS_ROLE_ID not in [role.id for role in interaction.user.roles]:
-        return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
+        return
 
-    logs_channel = bot.get_channel(
+    logs_channel = bot.get_channel(allowed_channel_id)
+    if logs_channel is None:
+        await interaction.response.send_message("Logs channel not found.", ephemeral=True)
+        return
+
+    # Fetch last 100 messages in logs channel (you can adjust limit)
+    messages = [msg async for msg in logs_channel.history(limit=100)]
+
+    user_logs = []
+    for msg in messages:
+        # Check if message has embeds and mentions the user
+        if msg.embeds:
+            embed = msg.embeds[0]
+            if user.mention in msg.content or (embed.description and user.mention in embed.description):
+                if "Flight Log" in embed.title:
+                    user_logs.append(embed)
+
+    if not user_logs:
+        await interaction.response.send_message(f"No flight logs found for {user.mention}.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    page_size = 5
+    for i in range(0, len(user_logs), page_size):
+        await interaction.followup.send(embeds=user_logs[i:i+page_size], ephemeral=True)
+
+bot.run(token)
