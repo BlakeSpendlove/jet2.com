@@ -54,65 +54,23 @@ def get_footer():
     return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight")
-@app_commands.describe(
-    host="Host of the flight",
-    date="Date of flight (DD/MM/YYYY)",
-    start_time="Start time (24-hour, e.g. 14:30)",
-    end_time="End time (24-hour, e.g. 16:30)",
-    flight_info="Flight route info",
-    aircraft_type="Aircraft used",
-    flight_code="Flight code"
-)
-async def flight_schedule(
-    interaction: discord.Interaction,
-    host: discord.Member,
-    date: str,
-    start_time: str,
-    end_time: str,
-    flight_info: str,
-    aircraft_type: str,
-    flight_code: str
-):
-    # Permission check
+@app_commands.describe(host="Host of the flight", time="Time of the flight", flight_info="Flight route", aircraft_type="Aircraft used", flight_code="Flight code")
+async def flight_schedule(interaction: discord.Interaction, host: str, time: str, flight_info: str, aircraft_type: str, flight_code: str):
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
-    # Parse date and time inputs
-    try:
-        date_obj = datetime.strptime(date, "%d/%m/%Y").date()
+    start_time = datetime.now(timezone.utc) + timedelta(minutes=5)
+    end_time = start_time + timedelta(hours=1)
 
-        start_time_obj = datetime.strptime(start_time, "%H:%M").time()
-        end_time_obj = datetime.strptime(end_time, "%H:%M").time()
-
-        start_datetime = datetime.combine(date_obj, start_time_obj).replace(tzinfo=timezone.utc)
-        end_datetime = datetime.combine(date_obj, end_time_obj).replace(tzinfo=timezone.utc)
-
-        if end_datetime <= start_datetime:
-            return await interaction.response.send_message("End time must be after start time.", ephemeral=True)
-    except ValueError:
-        return await interaction.response.send_message(
-            "Invalid date or time format. Use DD/MM/YYYY for date and HH:MM (24h) for times.",
-            ephemeral=True
-        )
-
-    # Create scheduled event
-    try:
-        event = await interaction.guild.create_scheduled_event(
-            name=f"Jet2 Flight - {flight_code}",
-            description=(
-                f"**Host:** {host.mention}\n"
-                f"**Aircraft:** {aircraft_type}\n"
-                f"**Flight Route:** {flight_info}\n"
-                f"**Flight Code:** {flight_code}"
-            ),
-            start_time=start_datetime,
-            end_time=end_datetime,
-            entity_type=discord.EntityType.external,
-            location="Jet2 Airport",
-            privacy_level=discord.PrivacyLevel.guild_only
-        )
-    except Exception as e:
-        return await interaction.response.send_message(f"Failed to create event: {e}", ephemeral=True)
+    event = await interaction.guild.create_scheduled_event(
+        name=f"Jet2 Flight - {flight_code}",
+        description=f"**Host:** {host}\n**Aircraft:** {aircraft_type}\n**Flight Schedule:** {flight_info}\n**Flight Code:** {flight_code}",
+        start_time=start_time,
+        end_time=end_time,
+        entity_type=discord.EntityType.external,
+        location="Jet2 Airport",
+        privacy_level=discord.PrivacyLevel.guild_only
+    )
 
     await interaction.response.send_message(f"Flight event created for **{flight_code}**. [View Event]({event.url})")
 
