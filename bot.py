@@ -5,15 +5,12 @@ import os
 import random
 import string
 from datetime import datetime, timedelta
-import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 token = os.getenv("DISCORD_TOKEN")
 guild_id = int(os.getenv("GUILD_ID"))
 
@@ -30,47 +27,67 @@ VIEWLOGS_ROLE_ID = int(os.getenv("VIEWLOGS_ROLE_ID"))
 
 BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png"
 
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 flight_logs = []
+
+commands_cleared = False
 
 @bot.event
 async def on_ready():
-    await bot.tree.sync()
+    global commands_cleared
+    if not commands_cleared:
+        print("Clearing guild commands to avoid duplicates...")
+        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
+        commands_cleared = True
+        print("Commands cleared and synced.")
+    else:
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
     print(f"Logged in as {bot.user}")
 
 def generate_id():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def get_footer():
-    return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    now_bst = datetime.utcnow() + timedelta(hours=1)  # BST = UTC+1
+    return f"ID: {generate_id()} | {now_bst.strftime('%Y-%m-%d %H:%M:%S')} BST"
 
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight")
 @app_commands.describe(
-    host="Host of the flight",
-    day="Date of the flight (DD/MM/YYYY)",
-    start_time="Start time (HH:MM)",
-    end_time="End time (HH:MM)",
-    flight_info="Flight route",
-    aircraft_type="Aircraft used",
-    flight_code="Flight code"
+    host="Select the flight host",
+    date="Date in DD/MM/YYYY",
+    start_time="Start time in 24h format",
+    end_time="End time in 24h format",
+    aircraft="Aircraft type (e.g. B737-800)",
+    flight_code="Flight code (e.g. LS8800)"
 )
-async def flight_schedule(interaction: discord.Interaction, host: str, day: str, start_time: str, end_time: str, flight_info: str, aircraft_type: str, flight_code: str):
+async def flight_schedule(
+    interaction: discord.Interaction,
+    host: discord.Member,
+    date: str,
+    start_time: str,
+    end_time: str,
+    aircraft: str,
+    flight_code: str
+):
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
     try:
-        bst = pytz.timezone('Europe/London')
-        start_dt = datetime.strptime(f"{day} {start_time}", "%d/%m/%Y %H:%M")
-        end_dt = datetime.strptime(f"{day} {end_time}", "%d/%m/%Y %H:%M")
-        start_time_utc = bst.localize(start_dt).astimezone(pytz.utc)
-        end_time_utc = bst.localize(end_dt).astimezone(pytz.utc)
+        start_dt = datetime.strptime(f"{date} {start_time}", "%d/%m/%Y %H:%M")
+        end_dt = datetime.strptime(f"{date} {end_time}", "%d/%m/%Y %H:%M")
     except ValueError:
-        return await interaction.response.send_message("Invalid date/time format. Use DD/MM/YYYY for day and HH:MM for times.", ephemeral=True)
+        return await interaction.response.send_message("Invalid date or time format. Use DD/MM/YYYY and 24h format.", ephemeral=True)
+
+    start_dt_utc = start_dt - timedelta(hours=1)  # Convert BST to UTC
+    end_dt_utc = end_dt - timedelta(hours=1)
 
     event = await interaction.guild.create_scheduled_event(
         name=f"Jet2 Flight - {flight_code}",
-        description=f"**Host:** {host}\n**Aircraft:** {aircraft_type}\n**Flight Schedule:** {flight_info}\n**Flight Code:** {flight_code}",
-        start_time=start_time_utc,
-        end_time=end_time_utc,
+        description=f"**Host:** {host.mention}\n**Aircraft:** {aircraft}\n**Flight Code:** {flight_code}",
+        start_time=start_dt_utc,
+        end_time=end_dt_utc,
         entity_type=discord.EntityType.external,
         location="Jet2 Airport",
         privacy_level=discord.PrivacyLevel.guild_only
@@ -189,5 +206,14 @@ async def view_logs(interaction: discord.Interaction, user: discord.Member):
     )
     embed.set_footer(text=get_footer())
     await interaction.response.send_message(embed=embed)
+
+@bot.command()
+async def clear_commands(ctx):
+    if ctx.author.guild_permissions.administrator:
+        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
+        await bot.tree.sync(guild=discord.Object(id=guild_id))
+        await ctx.send("✅ Cleared all guild-specific slash commands.")
+    else:
+        await ctx.send("❌ You don't have permission to do this.")
 
 bot.run(token)
