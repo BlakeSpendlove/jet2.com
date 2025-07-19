@@ -4,13 +4,16 @@ from discord.ext import commands
 import os
 import random
 import string
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+import pytz
 from dotenv import load_dotenv
 
 load_dotenv()
 
 intents = discord.Intents.default()
 intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+
 token = os.getenv("DISCORD_TOKEN")
 guild_id = int(os.getenv("GUILD_ID"))
 
@@ -27,24 +30,11 @@ VIEWLOGS_ROLE_ID = int(os.getenv("VIEWLOGS_ROLE_ID"))
 
 BANNER_URL = "https://media.discordapp.net/attachments/1395760490982150194/1395769069541789736/Banner1.png"
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
 flight_logs = []
-
-# Flag to clear commands only once per run
-commands_cleared = False
 
 @bot.event
 async def on_ready():
-    global commands_cleared
-    if not commands_cleared:
-        print("Clearing guild commands to avoid duplicates...")
-        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
-        await bot.tree.sync(guild=discord.Object(id=guild_id))
-        commands_cleared = True
-        print("Commands cleared and synced.")
-    else:
-        await bot.tree.sync(guild=discord.Object(id=guild_id))
+    await bot.tree.sync()
     print(f"Logged in as {bot.user}")
 
 def generate_id():
@@ -54,19 +44,33 @@ def get_footer():
     return f"ID: {generate_id()} | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
 @bot.tree.command(name="flight_schedule", description="Schedule a Jet2 flight")
-@app_commands.describe(host="Host of the flight", time="Time of the flight", flight_info="Flight route", aircraft_type="Aircraft used", flight_code="Flight code")
-async def flight_schedule(interaction: discord.Interaction, host: str, time: str, flight_info: str, aircraft_type: str, flight_code: str):
+@app_commands.describe(
+    host="Host of the flight",
+    day="Date of the flight (DD/MM/YYYY)",
+    start_time="Start time (HH:MM)",
+    end_time="End time (HH:MM)",
+    flight_info="Flight route",
+    aircraft_type="Aircraft used",
+    flight_code="Flight code"
+)
+async def flight_schedule(interaction: discord.Interaction, host: str, day: str, start_time: str, end_time: str, flight_info: str, aircraft_type: str, flight_code: str):
     if SCHEDULE_ROLE_ID not in [role.id for role in interaction.user.roles]:
         return await interaction.response.send_message("You do not have permission to use this.", ephemeral=True)
 
-    start_time = datetime.now(timezone.utc) + timedelta(minutes=5)
-    end_time = start_time + timedelta(hours=1)
+    try:
+        bst = pytz.timezone('Europe/London')
+        start_dt = datetime.strptime(f"{day} {start_time}", "%d/%m/%Y %H:%M")
+        end_dt = datetime.strptime(f"{day} {end_time}", "%d/%m/%Y %H:%M")
+        start_time_utc = bst.localize(start_dt).astimezone(pytz.utc)
+        end_time_utc = bst.localize(end_dt).astimezone(pytz.utc)
+    except ValueError:
+        return await interaction.response.send_message("Invalid date/time format. Use DD/MM/YYYY for day and HH:MM for times.", ephemeral=True)
 
     event = await interaction.guild.create_scheduled_event(
         name=f"Jet2 Flight - {flight_code}",
         description=f"**Host:** {host}\n**Aircraft:** {aircraft_type}\n**Flight Schedule:** {flight_info}\n**Flight Code:** {flight_code}",
-        start_time=start_time,
-        end_time=end_time,
+        start_time=start_time_utc,
+        end_time=end_time_utc,
         entity_type=discord.EntityType.external,
         location="Jet2 Airport",
         privacy_level=discord.PrivacyLevel.guild_only
@@ -185,14 +189,5 @@ async def view_logs(interaction: discord.Interaction, user: discord.Member):
     )
     embed.set_footer(text=get_footer())
     await interaction.response.send_message(embed=embed)
-
-@bot.command()
-async def clear_commands(ctx):
-    if ctx.author.guild_permissions.administrator:
-        await bot.tree.clear_commands(guild=discord.Object(id=guild_id))
-        await bot.tree.sync(guild=discord.Object(id=guild_id))
-        await ctx.send("✅ Cleared all guild-specific slash commands.")
-    else:
-        await ctx.send("❌ You don't have permission to do this.")
 
 bot.run(token)
